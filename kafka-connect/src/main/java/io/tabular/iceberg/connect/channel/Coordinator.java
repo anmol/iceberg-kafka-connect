@@ -137,7 +137,7 @@ public class Coordinator extends Channel {
   }
 
   private void doCommit(boolean partialCommit) {
-    Map<TableIdentifier, List<Envelope>> commitMap = commitState.tableCommitMap();
+    Map<TableIdentifier, List<List<Envelope>>> commitMap = commitState.tableCommitMap();
 
     String offsetsJson = offsetsJson();
     Long vtts = commitState.vtts(partialCommit);
@@ -147,7 +147,7 @@ public class Coordinator extends Channel {
         .stopOnFailure()
         .run(
             entry -> {
-              commitToTable(entry.getKey(), entry.getValue(), offsetsJson, vtts);
+              entry.getValue().forEach(x -> commitToTable(entry.getKey(), x, offsetsJson, vtts));
             });
 
     // we should only get here if all tables committed successfully...
