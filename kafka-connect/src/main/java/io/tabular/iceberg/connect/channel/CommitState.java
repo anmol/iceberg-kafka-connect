@@ -153,6 +153,7 @@ public class CommitState {
           }
           tempList.add(envelope);
         });
+    tokenized.add(tempList);
     return tokenized;
   }
 
