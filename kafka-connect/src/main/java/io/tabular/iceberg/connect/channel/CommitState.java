@@ -28,7 +28,10 @@ import java.util.LinkedList;
 import java.util.List;
 import java.util.Map;
 import java.util.UUID;
+import org.apache.iceberg.FileContent;
 import org.apache.iceberg.catalog.TableIdentifier;
+import org.apache.iceberg.relocated.com.google.common.collect.Lists;
+import org.apache.iceberg.relocated.com.google.common.collect.Maps;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -134,14 +137,38 @@ public class CommitState {
     return false;
   }
 
-  public Map<TableIdentifier, List<Envelope>> tableCommitMap() {
-    return commitBuffer.stream()
-        .collect(
-            groupingBy(
-                envelope ->
-                    ((CommitResponsePayload) envelope.event().payload())
-                        .tableName()
-                        .toIdentifier()));
+  private List<List<Envelope>> tokenize(List<Envelope> list) {
+    List<List<Envelope>> tokenized = Lists.newArrayList();
+    List<Envelope> tempList = new LinkedList<>();
+    list.forEach(
+        envelope -> {
+          if (((CommitResponsePayload) envelope.event().payload())
+                      .deleteFiles().stream()
+                          .filter(x -> x.content() == FileContent.EQUALITY_DELETES)
+                          .count()
+                  > 0
+              && !tempList.isEmpty()) {
+            tokenized.add(tempList);
+            tempList.clear();
+          }
+          tempList.add(envelope);
+        });
+    return tokenized;
+  }
+
+  public Map<TableIdentifier, List<List<Envelope>>> tableCommitMap() {
+    Map<TableIdentifier, List<Envelope>> commitMap =
+        commitBuffer.stream()
+            .collect(
+                groupingBy(
+                    envelope ->
+                        ((CommitResponsePayload) envelope.event().payload())
+                            .tableName()
+                            .toIdentifier()));
+
+    Map<TableIdentifier, List<List<Envelope>>> commitMap2 = Maps.newHashMap();
+    commitMap.forEach((k, v) -> commitMap2.put(k, tokenize(v)));
+    return commitMap2;
   }
 
   public Long vtts(boolean partialCommit) {
