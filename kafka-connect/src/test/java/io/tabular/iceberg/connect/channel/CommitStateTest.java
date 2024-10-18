@@ -24,12 +24,30 @@ import static org.mockito.Mockito.when;
 
 import io.tabular.iceberg.connect.IcebergSinkConfig;
 import io.tabular.iceberg.connect.events.CommitReadyPayload;
+import io.tabular.iceberg.connect.events.CommitResponsePayload;
 import io.tabular.iceberg.connect.events.Event;
+import io.tabular.iceberg.connect.events.EventType;
 import io.tabular.iceberg.connect.events.Payload;
+import io.tabular.iceberg.connect.events.TableName;
 import io.tabular.iceberg.connect.events.TopicPartitionOffset;
+import java.util.Arrays;
+import java.util.List;
 import java.util.UUID;
+import java.util.stream.Stream;
+import org.apache.iceberg.DataFile;
+import org.apache.iceberg.DataFiles;
+import org.apache.iceberg.DeleteFile;
+import org.apache.iceberg.FileContent;
+import org.apache.iceberg.FileFormat;
+import org.apache.iceberg.FileMetadata;
+import org.apache.iceberg.PartitionSpec;
+import org.apache.iceberg.catalog.TableIdentifier;
 import org.apache.iceberg.relocated.com.google.common.collect.ImmutableList;
+import org.apache.iceberg.types.Types.StructType;
+import org.apache.iceberg.util.Pair;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.MethodSource;
 
 public class CommitStateTest {
   @Test
@@ -92,6 +110,97 @@ public class CommitStateTest {
 
     assertThat(commitState.vtts(false)).isNull();
     assertThat(commitState.vtts(true)).isNull();
+  }
+
+  @ParameterizedTest
+  @MethodSource("envelopeListProvider")
+  public void testTokenize(Pair<List<Envelope>, Integer> input) {
+    CommitState commitState = new CommitState(mock(IcebergSinkConfig.class));
+    List<List<Envelope>> actual = commitState.tokenize(input.first());
+
+    assertThat(actual.size()).isEqualTo(input.second());
+  }
+
+  private static Stream<Pair<List<Envelope>, Integer>> envelopeListProvider() {
+    return Stream.of(
+        Pair.of(
+            Arrays.asList(
+                wrapInEnvelope(FileContent.EQUALITY_DELETES),
+                wrapInEnvelope(FileContent.EQUALITY_DELETES),
+                wrapInEnvelope(FileContent.POSITION_DELETES)),
+            1),
+        Pair.of(
+            Arrays.asList(
+                wrapInEnvelope(FileContent.POSITION_DELETES),
+                wrapInEnvelope(FileContent.EQUALITY_DELETES),
+                wrapInEnvelope(FileContent.POSITION_DELETES)),
+            2),
+        Pair.of(
+            Arrays.asList(
+                wrapInEnvelope(FileContent.POSITION_DELETES),
+                wrapInEnvelope(FileContent.POSITION_DELETES),
+                wrapInEnvelope(FileContent.POSITION_DELETES)),
+            1),
+        Pair.of(
+            Arrays.asList(
+                wrapInEnvelope(FileContent.POSITION_DELETES),
+                wrapInEnvelope(FileContent.EQUALITY_DELETES),
+                wrapInEnvelope(FileContent.POSITION_DELETES),
+                wrapInEnvelope(FileContent.EQUALITY_DELETES)),
+            3),
+        Pair.of(
+            Arrays.asList(
+                wrapInEnvelope(FileContent.DATA),
+                wrapInEnvelope(FileContent.DATA),
+                wrapInEnvelope(FileContent.DATA),
+                wrapInEnvelope(FileContent.DATA)),
+            1));
+  }
+
+  private static Envelope wrapInEnvelope(FileContent fileContent) {
+    final UUID payLoadCommitId = UUID.fromString("4142add7-7c92-4bbe-b864-21ce8ac4bf53");
+    final TableIdentifier tableIdentifier = TableIdentifier.of("db", "tbl");
+    final TableName tableName = TableName.of(tableIdentifier);
+    final String groupId = "some-group";
+
+    List<DeleteFile> deleteFiles =
+        (fileContent == FileContent.DATA)
+            ? List.of()
+            : (fileContent == FileContent.EQUALITY_DELETES)
+                ? ImmutableList.of(
+                    FileMetadata.deleteFileBuilder(PartitionSpec.unpartitioned())
+                        .ofEqualityDeletes(1)
+                        .withPath("delete.parquet")
+                        .withFileSizeInBytes(10)
+                        .withRecordCount(1)
+                        .build())
+                : ImmutableList.of(
+                    FileMetadata.deleteFileBuilder(PartitionSpec.unpartitioned())
+                        .ofPositionDeletes()
+                        .withPath("delete.parquet")
+                        .withFileSizeInBytes(10)
+                        .withRecordCount(1)
+                        .build());
+
+    List<DataFile> dataFiles =
+        (fileContent == FileContent.DATA)
+            ? ImmutableList.of(
+                DataFiles.builder(PartitionSpec.unpartitioned())
+                    .withPath("data.parquet")
+                    .withFormat(FileFormat.PARQUET)
+                    .withFileSizeInBytes(100L)
+                    .withRecordCount(5)
+                    .build())
+            : List.of();
+
+    return new Envelope(
+        new Event(
+            groupId,
+            EventType.COMMIT_RESPONSE,
+            new CommitResponsePayload(
+                StructType.of(), payLoadCommitId, tableName, dataFiles, deleteFiles)),
+        0,
+        0);
   }
 
   private Envelope wrapInEnvelope(Payload payload) {
