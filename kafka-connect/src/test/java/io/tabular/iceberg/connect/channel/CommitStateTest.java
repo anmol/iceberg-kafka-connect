@@ -34,8 +34,11 @@ import java.util.Arrays;
 import java.util.List;
 import java.util.UUID;
 import java.util.stream.Stream;
+import org.apache.iceberg.DataFile;
+import org.apache.iceberg.DataFiles;
 import org.apache.iceberg.DeleteFile;
 import org.apache.iceberg.FileContent;
+import org.apache.iceberg.FileFormat;
 import org.apache.iceberg.FileMetadata;
 import org.apache.iceberg.PartitionSpec;
 import org.apache.iceberg.catalog.TableIdentifier;
@@ -144,7 +147,14 @@ public class CommitStateTest {
                 wrapInEnvelope(FileContent.EQUALITY_DELETES),
                 wrapInEnvelope(FileContent.POSITION_DELETES),
                 wrapInEnvelope(FileContent.EQUALITY_DELETES)),
-            3));
+            3),
+        Pair.of(
+            Arrays.asList(
+                wrapInEnvelope(FileContent.DATA),
+                wrapInEnvelope(FileContent.DATA),
+                wrapInEnvelope(FileContent.DATA),
+                wrapInEnvelope(FileContent.DATA)),
+            1));
   }
 
   private static Envelope wrapInEnvelope(FileContent fileContent) {
@@ -153,31 +163,42 @@ public class CommitStateTest {
     final TableName tableName = TableName.of(tableIdentifier);
     final String groupId = "some-group";
 
-    DeleteFile deleteFile =
-        (fileContent == FileContent.EQUALITY_DELETES)
-            ? FileMetadata.deleteFileBuilder(PartitionSpec.unpartitioned())
-                .ofEqualityDeletes(1)
-                .withPath("delete.parquet")
-                .withFileSizeInBytes(10)
-                .withRecordCount(1)
-                .build()
-            : FileMetadata.deleteFileBuilder(PartitionSpec.unpartitioned())
-                .ofPositionDeletes()
-                .withPath("delete.parquet")
-                .withFileSizeInBytes(10)
-                .withRecordCount(1)
-                .build();
+    List<DeleteFile> deleteFiles =
+        (fileContent == FileContent.DATA)
+            ? List.of()
+            : (fileContent == FileContent.EQUALITY_DELETES)
+                ? ImmutableList.of(
+                    FileMetadata.deleteFileBuilder(PartitionSpec.unpartitioned())
+                        .ofEqualityDeletes(1)
+                        .withPath("delete.parquet")
+                        .withFileSizeInBytes(10)
+                        .withRecordCount(1)
+                        .build())
+                : ImmutableList.of(
+                    FileMetadata.deleteFileBuilder(PartitionSpec.unpartitioned())
+                        .ofPositionDeletes()
+                        .withPath("delete.parquet")
+                        .withFileSizeInBytes(10)
+                        .withRecordCount(1)
+                        .build());
+
+    List<DataFile> dataFiles =
+        (fileContent == FileContent.DATA)
+            ? ImmutableList.of(
+                DataFiles.builder(PartitionSpec.unpartitioned())
+                    .withPath("data.parquet")
+                    .withFormat(FileFormat.PARQUET)
+                    .withFileSizeInBytes(100L)
+                    .withRecordCount(5)
+                    .build())
+            : List.of();
 
     return new Envelope(
         new Event(
             groupId,
             EventType.COMMIT_RESPONSE,
             new CommitResponsePayload(
-                StructType.of(),
-                payLoadCommitId,
-                tableName,
-                List.of(),
-                ImmutableList.of(deleteFile))),
+                StructType.of(), payLoadCommitId, tableName, dataFiles, deleteFiles)),
         0,
         0);
   }
