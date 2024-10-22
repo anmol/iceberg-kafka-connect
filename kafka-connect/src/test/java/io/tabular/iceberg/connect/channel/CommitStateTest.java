@@ -126,6 +126,32 @@ public class CommitStateTest {
     actual.forEach(x -> assertThat(x).isNotEmpty());
   }
 
+  @Test
+  public void testTableCommitMap() {
+    CommitState commitState = new CommitState(mock(IcebergSinkConfig.class));
+    List<Envelope> envelopeList =
+        Arrays.asList(
+            wrapInEnvelope(ImmutableList.of(FileContent.DATA, FileContent.POSITION_DELETES), 0L),
+            wrapInEnvelope(ImmutableList.of(FileContent.DATA, FileContent.EQUALITY_DELETES), 1L),
+            wrapInEnvelope(ImmutableList.of(FileContent.DATA), 2L),
+            wrapInEnvelope(ImmutableList.of(FileContent.DATA, FileContent.EQUALITY_DELETES), 3L),
+            wrapInEnvelope(ImmutableList.of(FileContent.DATA), 4L),
+            wrapInEnvelope(ImmutableList.of(FileContent.DATA, FileContent.EQUALITY_DELETES), 5L));
+
+    envelopeList.forEach(commitState::addResponse);
+
+    List<Long> expected = Lists.newArrayList(0L, 1L, 2L, 3L, 4L, 5L);
+
+    List<Long> actual = Lists.newArrayList();
+
+    Map<TableIdentifier, List<List<Envelope>>> tableCommitMap = commitState.tableCommitMap();
+
+    tableCommitMap.forEach(
+        (key, value) -> value.forEach(x -> x.forEach(y -> actual.add(y.offset()))));
+
+    assertThat(actual).isEqualTo(expected);
+  }
+
   private static Stream<Pair<List<Envelope>, Integer>> envelopeListProvider() {
     return Stream.of(
         Pair.of(
@@ -135,42 +161,48 @@ public class CommitStateTest {
                         FileContent.DATA,
                         FileContent.DATA,
                         FileContent.DATA,
-                        FileContent.POSITION_DELETES)),
+                        FileContent.POSITION_DELETES),
+                    0L),
                 wrapInEnvelope(
                     ImmutableList.of(
                         FileContent.DATA,
                         FileContent.EQUALITY_DELETES,
-                        FileContent.POSITION_DELETES))),
+                        FileContent.POSITION_DELETES),
+                    0L)),
             2),
         Pair.of(
             Arrays.asList(
-                wrapInEnvelope(ImmutableList.of(FileContent.POSITION_DELETES)),
-                wrapInEnvelope(ImmutableList.of(FileContent.EQUALITY_DELETES)),
-                wrapInEnvelope(ImmutableList.of(FileContent.POSITION_DELETES))),
+                wrapInEnvelope(ImmutableList.of(FileContent.POSITION_DELETES), 0L),
+                wrapInEnvelope(ImmutableList.of(FileContent.EQUALITY_DELETES), 0L),
+                wrapInEnvelope(ImmutableList.of(FileContent.POSITION_DELETES), 0L)),
             2),
         Pair.of(
             Arrays.asList(
-                wrapInEnvelope(ImmutableList.of(FileContent.POSITION_DELETES)),
-                wrapInEnvelope(ImmutableList.of(FileContent.POSITION_DELETES)),
-                wrapInEnvelope(ImmutableList.of(FileContent.POSITION_DELETES))),
+                wrapInEnvelope(ImmutableList.of(FileContent.POSITION_DELETES), 0L),
+                wrapInEnvelope(ImmutableList.of(FileContent.POSITION_DELETES), 0L),
+                wrapInEnvelope(ImmutableList.of(FileContent.POSITION_DELETES), 0L)),
             1),
         Pair.of(
             Arrays.asList(
-                wrapInEnvelope(ImmutableList.of(FileContent.POSITION_DELETES)),
-                wrapInEnvelope(ImmutableList.of(FileContent.EQUALITY_DELETES)),
-                wrapInEnvelope(ImmutableList.of(FileContent.POSITION_DELETES)),
-                wrapInEnvelope(ImmutableList.of(FileContent.EQUALITY_DELETES))),
+                wrapInEnvelope(ImmutableList.of(FileContent.POSITION_DELETES), 0L),
+                wrapInEnvelope(ImmutableList.of(FileContent.EQUALITY_DELETES), 0L),
+                wrapInEnvelope(ImmutableList.of(FileContent.POSITION_DELETES), 0L),
+                wrapInEnvelope(ImmutableList.of(FileContent.EQUALITY_DELETES), 0L)),
             3),
         Pair.of(
             Arrays.asList(
-                wrapInEnvelope(ImmutableList.of(FileContent.DATA, FileContent.POSITION_DELETES)),
-                wrapInEnvelope(ImmutableList.of(FileContent.DATA, FileContent.EQUALITY_DELETES)),
-                wrapInEnvelope(ImmutableList.of(FileContent.DATA, FileContent.EQUALITY_DELETES)),
-                wrapInEnvelope(ImmutableList.of(FileContent.DATA, FileContent.EQUALITY_DELETES))),
+                wrapInEnvelope(
+                    ImmutableList.of(FileContent.DATA, FileContent.POSITION_DELETES), 0L),
+                wrapInEnvelope(
+                    ImmutableList.of(FileContent.DATA, FileContent.EQUALITY_DELETES), 0L),
+                wrapInEnvelope(
+                    ImmutableList.of(FileContent.DATA, FileContent.EQUALITY_DELETES), 0L),
+                wrapInEnvelope(
+                    ImmutableList.of(FileContent.DATA, FileContent.EQUALITY_DELETES), 0L)),
             2));
   }
 
-  private static Envelope wrapInEnvelope(List<FileContent> fileContents) {
+  private static Envelope wrapInEnvelope(List<FileContent> fileContents, Long offset) {
     final UUID payLoadCommitId = UUID.fromString("4142add7-7c92-4bbe-b864-21ce8ac4bf53");
     final TableIdentifier tableIdentifier = TableIdentifier.of("db", "tbl");
     final TableName tableName = TableName.of(tableIdentifier);
@@ -225,7 +257,7 @@ public class CommitStateTest {
             new CommitResponsePayload(
                 StructType.of(), payLoadCommitId, tableName, dataFiles, deleteFiles)),
         0,
-        0);
+        offset);
   }
 
   private Envelope wrapInEnvelope(Payload payload) {
