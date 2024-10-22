@@ -95,6 +95,7 @@ public class CommitState {
   }
 
   public void clearResponses() {
+    LOG.info("Clearing commit buffer");
     commitBuffer.clear();
   }
 
