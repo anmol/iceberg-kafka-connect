@@ -200,12 +200,12 @@ public class Coordinator extends Channel {
             .filter(
                 envelope -> {
                   Long minOffset = committedOffsets.get(envelope.partition());
-                  LOG.info("envelope.offset(): {}, minOffset: {}", envelope.offset(), minOffset);
+                  LOG.info("table: {}, envelope.offset(): {}, minOffset: {}", tableIdentifier, envelope.offset(), minOffset);
                   return minOffset == null || envelope.offset() >= minOffset;
                 })
             .collect(toList());
 
-    LOG.info("filteredEnvelopeList size: {}", filteredEnvelopeList.size());
+    LOG.info("table: {}, filteredEnvelopeList size: {}", tableIdentifier, filteredEnvelopeList.size());
 
     List<DataFile> dataFiles =
         Deduplicated.dataFiles(commitState.currentCommitId(), tableIdentifier, filteredEnvelopeList)
@@ -219,7 +219,7 @@ public class Coordinator extends Channel {
             .stream()
             .filter(deleteFile -> deleteFile.recordCount() > 0)
             .collect(toList());
-
+    LOG.info("table: {}, DataFiles: {} DeleteFiles: {}", tableIdentifier, dataFiles.size(), deleteFiles.size());
     if (dataFiles.isEmpty() && deleteFiles.isEmpty()) {
       LOG.info("Nothing to commit to table {}, skipping", tableIdentifier);
     } else {
