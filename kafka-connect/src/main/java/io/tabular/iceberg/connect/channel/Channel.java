@@ -22,7 +22,9 @@ import static java.util.stream.Collectors.toList;
 
 import io.tabular.iceberg.connect.IcebergSinkConfig;
 import io.tabular.iceberg.connect.data.Offset;
+import io.tabular.iceberg.connect.events.CommitResponsePayload;
 import io.tabular.iceberg.connect.events.Event;
+import io.tabular.iceberg.connect.events.EventType;
 import java.time.Duration;
 import java.util.List;
 import java.util.Map;
@@ -84,6 +86,7 @@ public abstract class Channel {
             .map(
                 event -> {
                   LOG.info("Sending event of type: {}", event.type().name());
+                  logCommitResponse(event);
                   byte[] data = Event.encode(event);
                   // key by producer ID to keep event order
                   return new ProducerRecord<>(controlTopic, producerId, data);
@@ -111,6 +114,22 @@ public abstract class Channel {
     }
   }
 
+  private void logCommitResponse(Event event) {
+    if (event.type() == EventType.COMMIT_RESPONSE) {
+      CommitResponsePayload payload = (CommitResponsePayload) event.payload();
+      UUID commitId = payload.commitId();
+      String tableName = payload.tableName().toIdentifier().name();
+      Integer dataFilesCount = payload.dataFiles().size();
+      Integer deleteFilesCount = payload.deleteFiles().size();
+      LOG.info(
+          "COMMIT_RESPONSE(commitId:{}, tableName:{}, dataFilesCount:{}, deleteFilesCount:{})",
+          commitId,
+          tableName,
+          dataFilesCount,
+          deleteFilesCount);
+    }
+  }
+
   protected abstract boolean receive(Envelope envelope);
 
   protected void consumeAvailable(Duration pollDuration) {
@@ -128,6 +147,7 @@ public abstract class Channel {
               LOG.debug("Received event of type: {}", event.type().name());
               if (receive(new Envelope(event, record.partition(), record.offset()))) {
                 LOG.info("Handled event of type: {}", event.type().name());
+                logCommitResponse(event);
               }
             }
           });

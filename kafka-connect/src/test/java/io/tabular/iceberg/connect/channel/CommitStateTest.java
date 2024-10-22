@@ -130,10 +130,18 @@ public class CommitStateTest {
     return Stream.of(
         Pair.of(
             Arrays.asList(
-                wrapInEnvelope(ImmutableList.of(FileContent.EQUALITY_DELETES)),
-                wrapInEnvelope(ImmutableList.of(FileContent.EQUALITY_DELETES)),
-                wrapInEnvelope(ImmutableList.of(FileContent.POSITION_DELETES))),
-            1),
+                wrapInEnvelope(
+                    ImmutableList.of(
+                        FileContent.DATA,
+                        FileContent.DATA,
+                        FileContent.DATA,
+                        FileContent.POSITION_DELETES)),
+                wrapInEnvelope(
+                    ImmutableList.of(
+                        FileContent.DATA,
+                        FileContent.EQUALITY_DELETES,
+                        FileContent.POSITION_DELETES))),
+            2),
         Pair.of(
             Arrays.asList(
                 wrapInEnvelope(ImmutableList.of(FileContent.POSITION_DELETES)),
@@ -171,29 +179,44 @@ public class CommitStateTest {
     List<DeleteFile> deleteFiles = Lists.newLinkedList();
     List<DataFile> dataFiles = Lists.newLinkedList();
 
-    Map<FileContent, List<FileContent>> fileMap = fileContents.stream()
-            .collect(Collectors.groupingBy(f -> f));
+    Map<FileContent, List<FileContent>> fileMap =
+        fileContents.stream().collect(Collectors.groupingBy(f -> f));
 
-    fileMap.getOrDefault(FileContent.DATA, ImmutableList.of()).forEach(x -> dataFiles.add(DataFiles.builder(PartitionSpec.unpartitioned())
-            .withPath("data.parquet")
-            .withFormat(FileFormat.PARQUET)
-            .withFileSizeInBytes(100L)
-            .withRecordCount(5)
-            .build()));
+    fileMap
+        .getOrDefault(FileContent.DATA, ImmutableList.of())
+        .forEach(
+            x ->
+                dataFiles.add(
+                    DataFiles.builder(PartitionSpec.unpartitioned())
+                        .withPath("data.parquet")
+                        .withFormat(FileFormat.PARQUET)
+                        .withFileSizeInBytes(100L)
+                        .withRecordCount(5)
+                        .build()));
 
-    fileMap.getOrDefault(FileContent.EQUALITY_DELETES, ImmutableList.of()).forEach(x -> deleteFiles.add(FileMetadata.deleteFileBuilder(PartitionSpec.unpartitioned())
-            .ofEqualityDeletes(1)
-            .withPath("delete.parquet")
-            .withFileSizeInBytes(10)
-            .withRecordCount(1)
-            .build()));
+    fileMap
+        .getOrDefault(FileContent.EQUALITY_DELETES, ImmutableList.of())
+        .forEach(
+            x ->
+                deleteFiles.add(
+                    FileMetadata.deleteFileBuilder(PartitionSpec.unpartitioned())
+                        .ofEqualityDeletes(1)
+                        .withPath("delete.parquet")
+                        .withFileSizeInBytes(10)
+                        .withRecordCount(1)
+                        .build()));
 
-    fileMap.getOrDefault(FileContent.POSITION_DELETES, ImmutableList.of()).forEach(x -> deleteFiles.add(FileMetadata.deleteFileBuilder(PartitionSpec.unpartitioned())
-            .ofPositionDeletes()
-            .withPath("delete.parquet")
-            .withFileSizeInBytes(10)
-            .withRecordCount(1)
-            .build()));
+    fileMap
+        .getOrDefault(FileContent.POSITION_DELETES, ImmutableList.of())
+        .forEach(
+            x ->
+                deleteFiles.add(
+                    FileMetadata.deleteFileBuilder(PartitionSpec.unpartitioned())
+                        .ofPositionDeletes()
+                        .withPath("delete.parquet")
+                        .withFileSizeInBytes(10)
+                        .withRecordCount(1)
+                        .build()));
 
     return new Envelope(
         new Event(

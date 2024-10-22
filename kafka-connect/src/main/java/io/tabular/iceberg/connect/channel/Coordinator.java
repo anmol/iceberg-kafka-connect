@@ -190,14 +190,22 @@ public class Coordinator extends Channel {
 
     Map<Integer, Long> committedOffsets = lastCommittedOffsetsForTable(table, branch.orElse(null));
 
+    LOG.info(
+        "Inside commitToTable: table: {}, lastCommittedOffsets: {}",
+        tableIdentifier,
+        committedOffsets);
+
     List<Envelope> filteredEnvelopeList =
         envelopeList.stream()
             .filter(
                 envelope -> {
                   Long minOffset = committedOffsets.get(envelope.partition());
+                  LOG.info("envelope.offset(): {}, minOffset: {}", envelope.offset(), minOffset);
                   return minOffset == null || envelope.offset() >= minOffset;
                 })
             .collect(toList());
+
+    LOG.info("filteredEnvelopeList size: {}", filteredEnvelopeList.size());
 
     List<DataFile> dataFiles =
         Deduplicated.dataFiles(commitState.currentCommitId(), tableIdentifier, filteredEnvelopeList)
