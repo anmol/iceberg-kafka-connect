@@ -206,10 +206,10 @@ public class Coordinator extends Channel {
    * offset committed in the previous commit and committed to the snapshot summary. The last batch
    * takes the offsetJson from the control topic and commits it.
    *
-   * @param tableIdentifier
-   * @param tokenizedEnvelopeList
-   * @param offsetsJson
-   * @param vtts
+   * @param tableIdentifier Iceberg TableIdentifier
+   * @param tokenizedEnvelopeList Tokenized Envelop List of Events
+   * @param offsetsJson offsetsJson from control topic
+   * @param vtts valid-through timestamp
    */
   private void commitToTableBatch(
       TableIdentifier tableIdentifier,
