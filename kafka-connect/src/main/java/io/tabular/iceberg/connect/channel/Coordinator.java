@@ -50,6 +50,7 @@ import org.apache.iceberg.catalog.TableIdentifier;
 import org.apache.iceberg.exceptions.NoSuchTableException;
 import org.apache.iceberg.relocated.com.google.common.collect.ImmutableMap;
 import org.apache.iceberg.relocated.com.google.common.collect.Lists;
+import org.apache.iceberg.util.Pair;
 import org.apache.iceberg.util.Tasks;
 import org.apache.iceberg.util.ThreadPools;
 import org.apache.kafka.clients.admin.MemberDescription;
@@ -137,7 +138,7 @@ public class Coordinator extends Channel {
   }
 
   private void doCommit(boolean partialCommit) {
-    Map<TableIdentifier, List<Envelope>> commitMap = commitState.tableCommitMap();
+    Map<TableIdentifier, List<List<Envelope>>> commitMap = commitState.tableCommitMap();
 
     String offsetsJson = offsetsJson();
     Long vtts = commitState.vtts(partialCommit);
@@ -147,7 +148,7 @@ public class Coordinator extends Channel {
         .stopOnFailure()
         .run(
             entry -> {
-              commitToTable(entry.getKey(), entry.getValue(), offsetsJson, vtts);
+              commitToTableBatch(entry.getKey(), entry.getValue(), offsetsJson, vtts);
             });
 
     // we should only get here if all tables committed successfully...
@@ -168,6 +169,16 @@ public class Coordinator extends Channel {
         vtts);
   }
 
+  private String resolveOffsetsJson(List<Envelope> envelopeList, Map<Integer, Long> oldOffset) {
+    Envelope last = envelopeList.get(envelopeList.size() - 1);
+    try {
+      oldOffset.put(last.partition(), last.offset());
+      return MAPPER.writeValueAsString(oldOffset);
+    } catch (IOException e) {
+      throw new UncheckedIOException(e);
+    }
+  }
+
   private String offsetsJson() {
     try {
       return MAPPER.writeValueAsString(controlTopicOffsets());
@@ -176,28 +187,94 @@ public class Coordinator extends Channel {
     }
   }
 
-  private void commitToTable(
-      TableIdentifier tableIdentifier, List<Envelope> envelopeList, String offsetsJson, Long vtts) {
+  private Pair<Table, Optional<String>> getTableAndBranch(TableIdentifier tableIdentifier) {
     Table table;
     try {
       table = catalog.loadTable(tableIdentifier);
+      Optional<String> branch = config.tableConfig(tableIdentifier.toString()).commitBranch();
+      return Pair.of(table, branch);
     } catch (NoSuchTableException e) {
       LOG.warn("Table not found, skipping commit: {}", tableIdentifier);
-      return;
+      return null;
     }
+  }
 
-    Optional<String> branch = config.tableConfig(tableIdentifier.toString()).commitBranch();
+  /**
+   * This method takes the tokenized Envelope list and calls commitToTable for each batch. In each
+   * batch(except the last one) the maxOffset of the last Envelope in the List is resolved with the
+   * offset committed in the previous commit and committed to the snapshot summary. The last batch
+   * takes the offsetJson from the control topic and commits it.
+   *
+   * @param tableIdentifier Iceberg TableIdentifier
+   * @param tokenizedEnvelopeList Tokenized Envelop List of Events
+   * @param offsetsJson offsetsJson from control topic
+   * @param vtts valid-through timestamp
+   */
+  private void commitToTableBatch(
+      TableIdentifier tableIdentifier,
+      List<List<Envelope>> tokenizedEnvelopeList,
+      String offsetsJson,
+      Long vtts) {
+    Pair<Table, Optional<String>> tableBranch = getTableAndBranch(tableIdentifier);
+    if (tableBranch != null) {
+      Map<Integer, Long> lastCommittedOffsetsForTable =
+          lastCommittedOffsetsForTable(tableBranch.first(), tableBranch.second().orElse(null));
+      for (int i = 0; i < tokenizedEnvelopeList.size() - 1; i++) {
+        List<Envelope> envelopeList = tokenizedEnvelopeList.get(i);
+        commitToTable(
+            tableIdentifier,
+            tableBranch,
+            envelopeList,
+            resolveOffsetsJson(envelopeList, lastCommittedOffsetsForTable),
+            null);
+      }
+      // last chunk commits offsetsJson from control topic
+      commitToTable(
+          tableIdentifier,
+          tableBranch,
+          tokenizedEnvelopeList.get(tokenizedEnvelopeList.size() - 1),
+          offsetsJson,
+          vtts);
+    }
+  }
+
+  private void commitToTable(
+      TableIdentifier tableIdentifier,
+      Pair<Table, Optional<String>> tableBranch,
+      List<Envelope> envelopeList,
+      String offsetsJson,
+      Long vtts) {
+    Table table;
+    if (tableBranch == null) {
+      return;
+    } else {
+      table = tableBranch.first();
+    }
+    Optional<String> branch = tableBranch.second();
 
     Map<Integer, Long> committedOffsets = lastCommittedOffsetsForTable(table, branch.orElse(null));
+
+    LOG.info(
+        "Inside commitToTable: table: {}, lastCommittedOffsets: {}",
+        tableIdentifier,
+        committedOffsets);
 
     List<Envelope> filteredEnvelopeList =
         envelopeList.stream()
             .filter(
                 envelope -> {
                   Long minOffset = committedOffsets.get(envelope.partition());
+                  LOG.info(
+                      "table: {}, envelope.offset(): {}, minOffset: {}",
+                      tableIdentifier,
+                      envelope.offset(),
+                      minOffset);
                   return minOffset == null || envelope.offset() >= minOffset;
                 })
             .collect(toList());
+
+    LOG.info(
+        "table: {}, filteredEnvelopeList size: {}", tableIdentifier, filteredEnvelopeList.size());
 
     List<DataFile> dataFiles =
         Deduplicated.dataFiles(commitState.currentCommitId(), tableIdentifier, filteredEnvelopeList)
@@ -211,7 +288,11 @@ public class Coordinator extends Channel {
             .stream()
             .filter(deleteFile -> deleteFile.recordCount() > 0)
             .collect(toList());
-
+    LOG.info(
+        "table: {}, DataFiles: {} DeleteFiles: {}",
+        tableIdentifier,
+        dataFiles.size(),
+        deleteFiles.size());
     if (dataFiles.isEmpty() && deleteFiles.isEmpty()) {
       LOG.info("Nothing to commit to table {}, skipping", tableIdentifier);
     } else {

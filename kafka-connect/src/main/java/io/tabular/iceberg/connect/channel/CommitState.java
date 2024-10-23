@@ -28,7 +28,11 @@ import java.util.LinkedList;
 import java.util.List;
 import java.util.Map;
 import java.util.UUID;
+import java.util.concurrent.atomic.AtomicBoolean;
+import org.apache.iceberg.FileContent;
 import org.apache.iceberg.catalog.TableIdentifier;
+import org.apache.iceberg.relocated.com.google.common.collect.Lists;
+import org.apache.iceberg.relocated.com.google.common.collect.Maps;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -91,6 +95,7 @@ public class CommitState {
   }
 
   public void clearResponses() {
+    LOG.info("Clearing commit buffer");
     commitBuffer.clear();
   }
 
@@ -134,14 +139,42 @@ public class CommitState {
     return false;
   }
 
-  public Map<TableIdentifier, List<Envelope>> tableCommitMap() {
-    return commitBuffer.stream()
-        .collect(
-            groupingBy(
-                envelope ->
-                    ((CommitResponsePayload) envelope.event().payload())
-                        .tableName()
-                        .toIdentifier()));
+  public List<List<Envelope>> tokenize(List<Envelope> list) {
+    List<List<Envelope>> tokenized = Lists.newArrayList();
+    List<Envelope> tempList = new LinkedList<>();
+    AtomicBoolean lastHasEqualityDeletes = new AtomicBoolean(true);
+    list.forEach(
+        envelope -> {
+          boolean checkEqualityDeletes =
+              ((CommitResponsePayload) envelope.event().payload())
+                  .deleteFiles().stream()
+                      .anyMatch(x -> x.content() == FileContent.EQUALITY_DELETES);
+          if (checkEqualityDeletes && !tempList.isEmpty()) {
+            if (!lastHasEqualityDeletes.get()) {
+              tokenized.add(List.copyOf(tempList));
+              tempList.clear();
+            }
+          }
+          tempList.add(envelope);
+          lastHasEqualityDeletes.set(checkEqualityDeletes);
+        });
+    tokenized.add(tempList);
+    return tokenized;
+  }
+
+  public Map<TableIdentifier, List<List<Envelope>>> tableCommitMap() {
+    Map<TableIdentifier, List<Envelope>> tempCommitMap =
+        commitBuffer.stream()
+            .collect(
+                groupingBy(
+                    envelope ->
+                        ((CommitResponsePayload) envelope.event().payload())
+                            .tableName()
+                            .toIdentifier()));
+
+    Map<TableIdentifier, List<List<Envelope>>> commitMap = Maps.newHashMap();
+    tempCommitMap.forEach((k, v) -> commitMap.put(k, tokenize(v)));
+    return commitMap;
   }
 
   public Long vtts(boolean partialCommit) {
