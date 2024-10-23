@@ -149,23 +149,7 @@ public class Coordinator extends Channel {
         .stopOnFailure()
         .run(
             entry -> {
-              Pair<Table, Optional<String>> tableBranch = getTableAndBranch(entry.getKey());
-              if (tableBranch != null) {
-                Map<Integer, Long> lastCommittedOffsetsForTable =
-                    lastCommittedOffsetsForTable(
-                        tableBranch.first(), tableBranch.second().orElse(null));
-                for (int i = 0; i < entry.getValue().size(); i++) {
-                  List<Envelope> envelopeList = entry.getValue().get(i);
-                  if (i < entry.getValue().size() - 1) {
-                    commitToTable(
-                        entry.getKey(),
-                        envelopeList,
-                        resolveOffsetsJson(envelopeList, lastCommittedOffsetsForTable),
-                        vtts);
-                  }
-                  commitToTable(entry.getKey(), envelopeList, offsetsJson, vtts);
-                }
-              }
+              commitToTableBatch(entry.getKey(), entry.getValue(), offsetsJson, vtts);
             });
 
     // we should only get here if all tables committed successfully...
@@ -189,7 +173,8 @@ public class Coordinator extends Channel {
   private String resolveOffsetsJson(List<Envelope> envelopeList, Map<Integer, Long> oldOffset) {
     Envelope last = ((LinkedList<Envelope>) envelopeList).getLast();
     try {
-      return MAPPER.writeValueAsString(oldOffset.put(last.partition(), last.offset()));
+      oldOffset.put(last.partition(), last.offset());
+      return MAPPER.writeValueAsString(oldOffset);
     } catch (IOException e) {
       throw new UncheckedIOException(e);
     }
@@ -212,6 +197,40 @@ public class Coordinator extends Channel {
     } catch (NoSuchTableException e) {
       LOG.warn("Table not found, skipping commit: {}", tableIdentifier);
       return null;
+    }
+  }
+
+  /**
+   * This method takes the tokenized Envelope list and calls commitToTable for each batch. In each
+   * batch(except the last one) the maxOffset of the last Envelope in the List is resolved with the
+   * offset committed in the previous commit and committed to the snapshot summary. The last batch
+   * takes the offsetJson from the control topic and commits it.
+   *
+   * @param tableIdentifier
+   * @param tokenizedEnvelopeList
+   * @param offsetsJson
+   * @param vtts
+   */
+  private void commitToTableBatch(
+      TableIdentifier tableIdentifier,
+      List<List<Envelope>> tokenizedEnvelopeList,
+      String offsetsJson,
+      Long vtts) {
+    Pair<Table, Optional<String>> tableBranch = getTableAndBranch(tableIdentifier);
+    if (tableBranch != null) {
+      Map<Integer, Long> lastCommittedOffsetsForTable =
+          lastCommittedOffsetsForTable(tableBranch.first(), tableBranch.second().orElse(null));
+      for (int i = 0; i < tokenizedEnvelopeList.size(); i++) {
+        List<Envelope> envelopeList = tokenizedEnvelopeList.get(i);
+        if (i < tokenizedEnvelopeList.size() - 1) {
+          commitToTable(
+              tableIdentifier,
+              envelopeList,
+              resolveOffsetsJson(envelopeList, lastCommittedOffsetsForTable),
+              vtts);
+        }
+        commitToTable(tableIdentifier, envelopeList, offsetsJson, vtts);
+      }
     }
   }
 
