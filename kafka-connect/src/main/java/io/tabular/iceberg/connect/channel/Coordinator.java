@@ -170,7 +170,7 @@ public class Coordinator extends Channel {
         vtts);
   }
 
-  private String resolveOffsetsJson(List<Envelope> envelopeList, Map<Integer, Long> oldOffset) {
+  private String resolveOffsetsJson(LinkedList<Envelope> envelopeList, Map<Integer, Long> oldOffset) {
     Envelope last = ((LinkedList<Envelope>) envelopeList).getLast();
     try {
       oldOffset.put(last.partition(), last.offset());
