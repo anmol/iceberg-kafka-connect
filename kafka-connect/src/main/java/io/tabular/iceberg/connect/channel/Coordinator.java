@@ -33,6 +33,7 @@ import java.io.IOException;
 import java.io.UncheckedIOException;
 import java.time.Duration;
 import java.util.Collection;
+import java.util.LinkedList;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
@@ -50,6 +51,7 @@ import org.apache.iceberg.catalog.TableIdentifier;
 import org.apache.iceberg.exceptions.NoSuchTableException;
 import org.apache.iceberg.relocated.com.google.common.collect.ImmutableMap;
 import org.apache.iceberg.relocated.com.google.common.collect.Lists;
+import org.apache.iceberg.util.Pair;
 import org.apache.iceberg.util.Tasks;
 import org.apache.iceberg.util.ThreadPools;
 import org.apache.kafka.clients.admin.MemberDescription;
@@ -147,7 +149,23 @@ public class Coordinator extends Channel {
         .stopOnFailure()
         .run(
             entry -> {
-              entry.getValue().forEach(x -> commitToTable(entry.getKey(), x, offsetsJson, vtts));
+              Pair<Table, Optional<String>> tableBranch = getTableAndBranch(entry.getKey());
+              if (tableBranch != null) {
+                Map<Integer, Long> lastCommittedOffsetsForTable =
+                    lastCommittedOffsetsForTable(
+                        tableBranch.first(), tableBranch.second().orElse(null));
+                for (int i = 0; i < entry.getValue().size(); i++) {
+                  List<Envelope> envelopeList = entry.getValue().get(i);
+                  if (i < entry.getValue().size() - 1) {
+                    commitToTable(
+                        entry.getKey(),
+                        envelopeList,
+                        resolveOffsetsJson(envelopeList, lastCommittedOffsetsForTable),
+                        vtts);
+                  }
+                  commitToTable(entry.getKey(), envelopeList, offsetsJson, vtts);
+                }
+              }
             });
 
     // we should only get here if all tables committed successfully...
@@ -168,6 +186,15 @@ public class Coordinator extends Channel {
         vtts);
   }
 
+  private String resolveOffsetsJson(List<Envelope> envelopeList, Map<Integer, Long> oldOffset) {
+    Envelope last = ((LinkedList<Envelope>) envelopeList).getLast();
+    try {
+      return MAPPER.writeValueAsString(oldOffset.put(last.partition(), last.offset()));
+    } catch (IOException e) {
+      throw new UncheckedIOException(e);
+    }
+  }
+
   private String offsetsJson() {
     try {
       return MAPPER.writeValueAsString(controlTopicOffsets());
@@ -176,17 +203,28 @@ public class Coordinator extends Channel {
     }
   }
 
-  private void commitToTable(
-      TableIdentifier tableIdentifier, List<Envelope> envelopeList, String offsetsJson, Long vtts) {
+  private Pair<Table, Optional<String>> getTableAndBranch(TableIdentifier tableIdentifier) {
     Table table;
     try {
       table = catalog.loadTable(tableIdentifier);
+      Optional<String> branch = config.tableConfig(tableIdentifier.toString()).commitBranch();
+      return Pair.of(table, branch);
     } catch (NoSuchTableException e) {
       LOG.warn("Table not found, skipping commit: {}", tableIdentifier);
-      return;
+      return null;
     }
+  }
 
-    Optional<String> branch = config.tableConfig(tableIdentifier.toString()).commitBranch();
+  private void commitToTable(
+      TableIdentifier tableIdentifier, List<Envelope> envelopeList, String offsetsJson, Long vtts) {
+    Table table;
+    Pair<Table, Optional<String>> tableBranch = getTableAndBranch(tableIdentifier);
+    if (tableBranch == null) {
+      return;
+    } else {
+      table = tableBranch.first();
+    }
+    Optional<String> branch = tableBranch.second();
 
     Map<Integer, Long> committedOffsets = lastCommittedOffsetsForTable(table, branch.orElse(null));
 
@@ -200,12 +238,17 @@ public class Coordinator extends Channel {
             .filter(
                 envelope -> {
                   Long minOffset = committedOffsets.get(envelope.partition());
-                  LOG.info("table: {}, envelope.offset(): {}, minOffset: {}", tableIdentifier, envelope.offset(), minOffset);
+                  LOG.info(
+                      "table: {}, envelope.offset(): {}, minOffset: {}",
+                      tableIdentifier,
+                      envelope.offset(),
+                      minOffset);
                   return minOffset == null || envelope.offset() >= minOffset;
                 })
             .collect(toList());
 
-    LOG.info("table: {}, filteredEnvelopeList size: {}", tableIdentifier, filteredEnvelopeList.size());
+    LOG.info(
+        "table: {}, filteredEnvelopeList size: {}", tableIdentifier, filteredEnvelopeList.size());
 
     List<DataFile> dataFiles =
         Deduplicated.dataFiles(commitState.currentCommitId(), tableIdentifier, filteredEnvelopeList)
@@ -219,7 +262,11 @@ public class Coordinator extends Channel {
             .stream()
             .filter(deleteFile -> deleteFile.recordCount() > 0)
             .collect(toList());
-    LOG.info("table: {}, DataFiles: {} DeleteFiles: {}", tableIdentifier, dataFiles.size(), deleteFiles.size());
+    LOG.info(
+        "table: {}, DataFiles: {} DeleteFiles: {}",
+        tableIdentifier,
+        dataFiles.size(),
+        deleteFiles.size());
     if (dataFiles.isEmpty() && deleteFiles.isEmpty()) {
       LOG.info("Nothing to commit to table {}, skipping", tableIdentifier);
     } else {
