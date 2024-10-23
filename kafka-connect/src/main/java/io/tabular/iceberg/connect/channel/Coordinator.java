@@ -33,7 +33,6 @@ import java.io.IOException;
 import java.io.UncheckedIOException;
 import java.time.Duration;
 import java.util.Collection;
-import java.util.LinkedList;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
@@ -170,8 +169,8 @@ public class Coordinator extends Channel {
         vtts);
   }
 
-  private String resolveOffsetsJson(LinkedList<Envelope> envelopeList, Map<Integer, Long> oldOffset) {
-    Envelope last = ((LinkedList<Envelope>) envelopeList).getLast();
+  private String resolveOffsetsJson(List<Envelope> envelopeList, Map<Integer, Long> oldOffset) {
+    Envelope last = envelopeList.get(envelopeList.size() - 1);
     try {
       oldOffset.put(last.partition(), last.offset());
       return MAPPER.writeValueAsString(oldOffset);
@@ -220,24 +219,32 @@ public class Coordinator extends Channel {
     if (tableBranch != null) {
       Map<Integer, Long> lastCommittedOffsetsForTable =
           lastCommittedOffsetsForTable(tableBranch.first(), tableBranch.second().orElse(null));
-      for (int i = 0; i < tokenizedEnvelopeList.size(); i++) {
+      for (int i = 0; i < tokenizedEnvelopeList.size() - 1; i++) {
         List<Envelope> envelopeList = tokenizedEnvelopeList.get(i);
-        if (i < tokenizedEnvelopeList.size() - 1) {
-          commitToTable(
-              tableIdentifier,
-              envelopeList,
-              resolveOffsetsJson(envelopeList, lastCommittedOffsetsForTable),
-              vtts);
-        }
-        commitToTable(tableIdentifier, envelopeList, offsetsJson, vtts);
+        commitToTable(
+            tableIdentifier,
+            tableBranch,
+            envelopeList,
+            resolveOffsetsJson(envelopeList, lastCommittedOffsetsForTable),
+            null);
       }
+      // last chunk commits offsetsJson from control topic
+      commitToTable(
+          tableIdentifier,
+          tableBranch,
+          tokenizedEnvelopeList.get(tokenizedEnvelopeList.size() - 1),
+          offsetsJson,
+          vtts);
     }
   }
 
   private void commitToTable(
-      TableIdentifier tableIdentifier, List<Envelope> envelopeList, String offsetsJson, Long vtts) {
+      TableIdentifier tableIdentifier,
+      Pair<Table, Optional<String>> tableBranch,
+      List<Envelope> envelopeList,
+      String offsetsJson,
+      Long vtts) {
     Table table;
-    Pair<Table, Optional<String>> tableBranch = getTableAndBranch(tableIdentifier);
     if (tableBranch == null) {
       return;
     } else {
