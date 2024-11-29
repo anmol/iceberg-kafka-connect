@@ -117,13 +117,11 @@ public class CommitStateTest {
 
   @ParameterizedTest
   @MethodSource("envelopeListProvider")
-  public void testTokenize(Pair<List<Envelope>, Integer> input) {
+  public void testTokenize(Pair<List<Envelope>, List<List<Envelope>>> input) {
     CommitState commitState = new CommitState(mock(IcebergSinkConfig.class));
     List<List<Envelope>> actual = commitState.tokenize(input.first());
 
-    assertThat(actual.size()).isEqualTo(input.second());
-
-    actual.forEach(x -> assertThat(x).isNotEmpty());
+    assertThat(actual).isEqualTo(input.second());
   }
 
   @Test
@@ -152,54 +150,30 @@ public class CommitStateTest {
     assertThat(actual).isEqualTo(expected);
   }
 
-  private static Stream<Pair<List<Envelope>, Integer>> envelopeListProvider() {
+  private static Stream<Pair<List<Envelope>, List<List<Envelope>>>> envelopeListProvider() {
+    Envelope posDelete = wrapInEnvelope(ImmutableList.of(FileContent.POSITION_DELETES), 0L);
+    Envelope eqDelete = wrapInEnvelope(ImmutableList.of(FileContent.EQUALITY_DELETES), 0L);
+    Envelope data = wrapInEnvelope(ImmutableList.of(FileContent.DATA), 0L);
     return Stream.of(
+        Pair.of(Arrays.asList(data, eqDelete), Arrays.asList(List.of(data), List.of(eqDelete))),
         Pair.of(
-            Arrays.asList(
-                wrapInEnvelope(
-                    ImmutableList.of(
-                        FileContent.DATA,
-                        FileContent.DATA,
-                        FileContent.DATA,
-                        FileContent.POSITION_DELETES),
-                    0L),
-                wrapInEnvelope(
-                    ImmutableList.of(
-                        FileContent.DATA,
-                        FileContent.EQUALITY_DELETES,
-                        FileContent.POSITION_DELETES),
-                    0L)),
-            2),
+            Arrays.asList(posDelete, eqDelete, posDelete),
+            Arrays.asList(List.of(posDelete), List.of(eqDelete), List.of(posDelete))),
         Pair.of(
-            Arrays.asList(
-                wrapInEnvelope(ImmutableList.of(FileContent.POSITION_DELETES), 0L),
-                wrapInEnvelope(ImmutableList.of(FileContent.EQUALITY_DELETES), 0L),
-                wrapInEnvelope(ImmutableList.of(FileContent.POSITION_DELETES), 0L)),
-            2),
+            Arrays.asList(posDelete, posDelete, posDelete),
+            List.of(Arrays.asList(posDelete, posDelete, posDelete))),
         Pair.of(
+            Arrays.asList(posDelete, eqDelete, posDelete, eqDelete),
             Arrays.asList(
-                wrapInEnvelope(ImmutableList.of(FileContent.POSITION_DELETES), 0L),
-                wrapInEnvelope(ImmutableList.of(FileContent.POSITION_DELETES), 0L),
-                wrapInEnvelope(ImmutableList.of(FileContent.POSITION_DELETES), 0L)),
-            1),
+                List.of(posDelete), List.of(eqDelete), List.of(posDelete), List.of(eqDelete))),
         Pair.of(
+            Arrays.asList(eqDelete, eqDelete, eqDelete, posDelete),
             Arrays.asList(
-                wrapInEnvelope(ImmutableList.of(FileContent.POSITION_DELETES), 0L),
-                wrapInEnvelope(ImmutableList.of(FileContent.EQUALITY_DELETES), 0L),
-                wrapInEnvelope(ImmutableList.of(FileContent.POSITION_DELETES), 0L),
-                wrapInEnvelope(ImmutableList.of(FileContent.EQUALITY_DELETES), 0L)),
-            3),
+                List.of(eqDelete), List.of(eqDelete), List.of(eqDelete), List.of(posDelete))),
         Pair.of(
+            Arrays.asList(posDelete, eqDelete, eqDelete, eqDelete),
             Arrays.asList(
-                wrapInEnvelope(
-                    ImmutableList.of(FileContent.DATA, FileContent.POSITION_DELETES), 0L),
-                wrapInEnvelope(
-                    ImmutableList.of(FileContent.DATA, FileContent.EQUALITY_DELETES), 0L),
-                wrapInEnvelope(
-                    ImmutableList.of(FileContent.DATA, FileContent.EQUALITY_DELETES), 0L),
-                wrapInEnvelope(
-                    ImmutableList.of(FileContent.DATA, FileContent.EQUALITY_DELETES), 0L)),
-            2));
+                List.of(posDelete), List.of(eqDelete), List.of(eqDelete), List.of(eqDelete))));
   }
 
   private static Envelope wrapInEnvelope(List<FileContent> fileContents, Long offset) {
