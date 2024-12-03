@@ -50,6 +50,7 @@ import org.apache.iceberg.catalog.TableIdentifier;
 import org.apache.iceberg.exceptions.NoSuchTableException;
 import org.apache.iceberg.relocated.com.google.common.collect.ImmutableMap;
 import org.apache.iceberg.relocated.com.google.common.collect.Lists;
+import org.apache.iceberg.relocated.com.google.common.collect.Maps;
 import org.apache.iceberg.util.Pair;
 import org.apache.iceberg.util.Tasks;
 import org.apache.iceberg.util.ThreadPools;
@@ -169,7 +170,7 @@ public class Coordinator extends Channel {
         vtts);
   }
 
-  private String resolveOffsetsJson(List<Envelope> envelopeList, Map<Integer, Long> oldOffset) {
+  private String getUpdatedOffsetsJson(List<Envelope> envelopeList, Map<Integer, Long> oldOffset) {
     Envelope last = envelopeList.get(envelopeList.size() - 1);
     try {
       oldOffset.put(last.partition(), last.offset());
@@ -218,14 +219,15 @@ public class Coordinator extends Channel {
     Pair<Table, Optional<String>> tableBranch = getTableAndBranch(tableIdentifier);
     if (tableBranch != null) {
       Map<Integer, Long> lastCommittedOffsetsForTable =
-          lastCommittedOffsetsForTable(tableBranch.first(), tableBranch.second().orElse(null));
+          Maps.newHashMap(
+              lastCommittedOffsetsForTable(tableBranch.first(), tableBranch.second().orElse(null)));
       for (int i = 0; i < tokenizedEnvelopeList.size() - 1; i++) {
         List<Envelope> envelopeList = tokenizedEnvelopeList.get(i);
         commitToTable(
             tableIdentifier,
             tableBranch,
             envelopeList,
-            resolveOffsetsJson(envelopeList, lastCommittedOffsetsForTable),
+            getUpdatedOffsetsJson(envelopeList, lastCommittedOffsetsForTable),
             null);
       }
       // last chunk commits offsetsJson from control topic
